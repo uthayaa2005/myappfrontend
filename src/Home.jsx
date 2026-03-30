@@ -8,18 +8,33 @@ const socket = io(API_URL);
 const fmt = (s) =>
   s.replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
 
+// Build the YouTube embed src from server sync data
+function buildSrc(song, isPlaying) {
+  if (!song) return null;
+  // Calculate current position using server's startedAt + offset
+  const position = Math.floor(
+    song.offset + (Date.now() - song.startedAt) / 1000
+  );
+  return `https://www.youtube.com/embed/${song.videoId}?autoplay=${
+    isPlaying ? 1 : 0
+  }&start=${Math.max(0, position)}&enablejsapi=1`;
+}
+
 export default function Home({ user }) {
   const [roomId] = useState("uthayaa-anu");
   const [query, setQuery] = useState("");
   const [videos, setVideos] = useState([]);
-  const [current, setCurrent] = useState(null);
+  const [current, setCurrent] = useState(null);   // { videoId, startedAt, offset }
   const [isPlaying, setIsPlaying] = useState(false);
   const [message, setMessage] = useState("");
   const [chat, setChat] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const chatRef = useRef(null);
+  const iframeRef = useRef(null);
   const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 
+  // ── Search ────────────────────────────────────────────────
   const search = async () => {
     if (!query.trim()) return;
     setSearching(true);
@@ -42,27 +57,53 @@ export default function Home({ user }) {
     }
   };
 
+  // ── Socket setup ──────────────────────────────────────────
   useEffect(() => {
-    socket.emit("joinRoom", roomId);
+    // Pass name so server can track who's online
+    socket.emit("joinRoom", { roomId, name: user });
+
+    // Initial state when joining (syncs position too)
     socket.on("roomData", (data) => {
       setCurrent(data.currentSong);
       setIsPlaying(data.isPlaying);
+      setOnlineUsers(data.onlineUsers || []);
     });
+
+    // Online presence updates
+    socket.on("onlineUsers", (users) => setOnlineUsers(users));
+
+    // Chat
     socket.on("receiveMessage", (msg) =>
       setChat((prev) => [...prev, msg])
     );
+
+    // Both users: play new song from the same startedAt
     socket.on("playSong", (data) => {
       setCurrent(data);
       setIsPlaying(true);
     });
-    socket.on("pauseSong", () => setIsPlaying(false));
+
+    // Both users: pause at the same position
+    socket.on("pauseSong", ({ position }) => {
+      // Rebuild current with a frozen position so the iframe src is stable
+      setCurrent((prev) =>
+        prev
+          ? { ...prev, offset: position, startedAt: Date.now(), pausedAt: Date.now() }
+          : prev
+      );
+      setIsPlaying(false);
+    });
+
+    // Both users: resume from the same position
     socket.on("resumeSong", (data) => {
       setCurrent(data);
       setIsPlaying(true);
     });
+
     return () => socket.off();
   }, []);
 
+  // Auto-scroll chat
   useEffect(() => {
     if (chatRef.current)
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -75,12 +116,15 @@ export default function Home({ user }) {
   };
 
   const playSong = (videoId) => {
-    socket.emit("playSong", {
-      roomId,
-      data: { videoId, timestamp: Date.now() },
-    });
+    socket.emit("playSong", { roomId, data: { videoId } });
   };
 
+  const pause = () => socket.emit("pauseSong", roomId);
+  const resume = () => socket.emit("resumeSong", roomId);
+
+  const embedSrc = current ? buildSrc(current, isPlaying) : null;
+
+  // ── UI ────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#0a0608] text-[#f0e6ea] font-sans">
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;1,300&family=DM+Sans:wght@300;400;500&display=swap');`}</style>
@@ -93,35 +137,51 @@ export default function Home({ user }) {
             className="text-3xl font-light tracking-wide"
             style={{ fontFamily: "'Cormorant Garamond', Georgia, serif" }}
           >
-            our little{" "}
-            <span className="text-[#c4607a] italic">room</span>
+            our little <span className="text-[#c4607a] italic">room</span>
           </h1>
 
-          <div className="flex items-center gap-2 bg-[#1a1215] border border-[#b46478]/20 rounded-full px-4 py-1.5 text-xs tracking-widest uppercase text-[#f0e6ea]/50">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            uthayaa &amp; anu
+          {/* Online presence pills */}
+          <div className="flex items-center gap-2">
+            {["uthayaa", "anu"].map((name) => {
+              const online = onlineUsers.includes(name);
+              return (
+                <div
+                  key={name}
+                  className={`flex items-center gap-2 border rounded-full px-4 py-1.5 text-xs tracking-widest uppercase transition-all ${
+                    online
+                      ? "bg-[#1a1215] border-[#b46478]/40 text-[#f0e6ea]/80"
+                      : "bg-[#120d0f] border-[#b46478]/10 text-[#f0e6ea]/25"
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      online ? "bg-emerald-400 animate-pulse" : "bg-[#f0e6ea]/20"
+                    }`}
+                  />
+                  {name}
+                </div>
+              );
+            })}
           </div>
         </header>
 
         {/* ── Body grid ── */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
 
-          {/* ── LEFT: player + search ── */}
+          {/* ── LEFT ── */}
           <div className="flex flex-col gap-5">
 
-            {/* Player card */}
+            {/* Player */}
             <div className="relative bg-[#120d0f] border border-[#b46478]/20 rounded-2xl overflow-hidden">
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(196,96,122,0.18),transparent_70%)] pointer-events-none z-10" />
 
-              {current ? (
+              {embedSrc ? (
                 <iframe
+                  ref={iframeRef}
+                  key={embedSrc}          /* remount on new song / resume to apply new start */
                   className="w-full block"
                   height="300"
-                  src={`https://www.youtube.com/embed/${current.videoId}?autoplay=${
-                    isPlaying ? 1 : 0
-                  }&start=${Math.floor(
-                    (Date.now() - current.timestamp) / 1000
-                  )}`}
+                  src={embedSrc}
                   allow="autoplay; fullscreen"
                   allowFullScreen
                 />
@@ -136,21 +196,23 @@ export default function Home({ user }) {
 
               <div className="flex gap-3 px-4 py-3 border-t border-[#b46478]/20">
                 <button
-                  onClick={() => socket.emit("pauseSong", roomId)}
-                  className="flex-1 py-2.5 rounded-xl border border-[#b46478]/20 bg-[#1a1215] text-sm tracking-wide hover:bg-[rgba(196,96,122,0.15)] hover:border-[#8a3a50] transition-all"
+                  onClick={pause}
+                  disabled={!isPlaying}
+                  className="flex-1 py-2.5 rounded-xl border border-[#b46478]/20 bg-[#1a1215] text-sm tracking-wide hover:bg-[rgba(196,96,122,0.15)] hover:border-[#8a3a50] disabled:opacity-30 transition-all"
                 >
                   ⏸ pause
                 </button>
                 <button
-                  onClick={() => socket.emit("resumeSong", roomId)}
-                  className="flex-1 py-2.5 rounded-xl border border-[#b46478]/20 bg-[#1a1215] text-sm tracking-wide hover:bg-[rgba(196,96,122,0.15)] hover:border-[#8a3a50] transition-all"
+                  onClick={resume}
+                  disabled={isPlaying}
+                  className="flex-1 py-2.5 rounded-xl border border-[#b46478]/20 bg-[#1a1215] text-sm tracking-wide hover:bg-[rgba(196,96,122,0.15)] hover:border-[#8a3a50] disabled:opacity-30 transition-all"
                 >
                   ▶ resume
                 </button>
               </div>
             </div>
 
-            {/* Search bar */}
+            {/* Search */}
             <div className="flex gap-3">
               <input
                 className="flex-1 bg-[#120d0f] border border-[#b46478]/20 rounded-xl px-4 py-2.5 text-sm placeholder-[#f0e6ea]/30 outline-none focus:border-[#8a3a50] transition-colors"
@@ -167,7 +229,7 @@ export default function Home({ user }) {
               </button>
             </div>
 
-            {/* Results grid */}
+            {/* Results */}
             {videos.length > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {videos.map((v) => (
@@ -190,10 +252,9 @@ export default function Home({ user }) {
             )}
           </div>
 
-          {/* ── RIGHT: chat sidebar ── */}
+          {/* ── RIGHT: chat ── */}
           <div className="flex flex-col bg-[#120d0f] border border-[#b46478]/20 rounded-2xl overflow-hidden h-fit lg:max-h-[calc(100vh-120px)]">
 
-            {/* Chat header */}
             <div
               className="px-5 py-4 border-b border-[#b46478]/20 text-[#f0e6ea]/50 tracking-widest font-light flex items-center gap-2"
               style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.05rem" }}
@@ -201,7 +262,6 @@ export default function Home({ user }) {
               <span className="text-[#c4607a]">♡</span> messages
             </div>
 
-            {/* Messages list */}
             <div
               ref={chatRef}
               className="flex flex-col gap-3 p-4 overflow-y-auto min-h-[280px] max-h-[380px] scrollbar-thin scrollbar-thumb-[#8a3a50] scrollbar-track-transparent"
@@ -220,9 +280,7 @@ export default function Home({ user }) {
                   return (
                     <div
                       key={i}
-                      className={`flex flex-col gap-1 ${
-                        isSelf ? "items-end" : "items-start"
-                      }`}
+                      className={`flex flex-col gap-1 ${isSelf ? "items-end" : "items-start"}`}
                     >
                       <span className="text-[10px] tracking-widest uppercase text-[#c9a96e]">
                         {sender.trim()}
@@ -242,7 +300,6 @@ export default function Home({ user }) {
               )}
             </div>
 
-            {/* Message input */}
             <div className="flex gap-2 p-3 border-t border-[#b46478]/20">
               <input
                 className="flex-1 bg-[#1a1215] border border-[#b46478]/20 rounded-lg px-3 py-2 text-[13px] placeholder-[#f0e6ea]/25 outline-none focus:border-[#8a3a50] transition-colors"
@@ -255,16 +312,7 @@ export default function Home({ user }) {
                 onClick={sendMessage}
                 className="w-9 h-9 shrink-0 bg-[#c4607a] hover:bg-[#d4708a] active:scale-95 rounded-lg flex items-center justify-center transition-all"
               >
-                <svg
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#fff"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13" />
                   <polygon points="22 2 15 22 11 13 2 9 22 2" />
                 </svg>
