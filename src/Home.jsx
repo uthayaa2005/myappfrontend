@@ -2,159 +2,141 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 
-// ✅ Backend URL from Render ENV
 const API_URL = import.meta.env.VITE_API_URL;
-
-// ✅ Socket connection
 const socket = io(API_URL);
 
 export default function Home({ user }) {
+  const [roomId] = useState("uthayaa-anu"); // 💖 private room
   const [query, setQuery] = useState("");
   const [videos, setVideos] = useState([]);
-  const [current, setCurrent] = useState("");
+  const [current, setCurrent] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [message, setMessage] = useState("");
   const [chat, setChat] = useState([]);
 
-  // ✅ API KEY from ENV (SAFE)
   const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 
-  // 🎵 SEARCH SONG
+  // 🎵 SEARCH
   const search = async () => {
-    try {
-      const res = await axios.get(
-        "https://www.googleapis.com/youtube/v3/search",
-        {
-          params: {
-            part: "snippet",
-            q: query,
-            key: API_KEY,
-            maxResults: 5,
-            type: "video",
-          },
-        }
-      );
-      setVideos(res.data.items);
-    } catch (err) {
-      console.error(err);
-    }
+    const res = await axios.get(
+      "https://www.googleapis.com/youtube/v3/search",
+      {
+        params: {
+          part: "snippet",
+          q: query,
+          key: API_KEY,
+          maxResults: 5,
+          type: "video",
+        },
+      }
+    );
+    setVideos(res.data.items);
   };
 
-  // 💬 + 🎵 RECEIVE EVENTS
+  // 🏠 JOIN ROOM
   useEffect(() => {
+    socket.emit("joinRoom", roomId);
+
+    socket.on("roomData", (data) => {
+      setCurrent(data.currentSong);
+      setIsPlaying(data.isPlaying);
+    });
+
     socket.on("receiveMessage", (msg) => {
       setChat((prev) => [...prev, msg]);
     });
 
-    socket.on("playSong", (videoId) => {
-      setCurrent(videoId);
+    socket.on("playSong", (data) => {
+      setCurrent(data);
+      setIsPlaying(true);
     });
 
+    socket.on("pauseSong", () => setIsPlaying(false));
+    socket.on("resumeSong", () => setIsPlaying(true));
+
     return () => {
-      socket.off("receiveMessage");
-      socket.off("playSong");
+      socket.off();
     };
   }, []);
 
-  // 💬 SEND MESSAGE
+  // 💬 SEND
   const sendMessage = () => {
-    if (!message.trim()) return;
-    socket.emit("sendMessage", `${user}: ${message}`);
+    socket.emit("sendMessage", {
+      roomId,
+      msg: `${user}: ${message}`,
+    });
     setMessage("");
   };
 
-  // 🎵 PLAY SONG (SYNC)
+  // 🎵 PLAY
   const playSong = (videoId) => {
-    socket.emit("playSong", videoId);
+    socket.emit("playSong", {
+      roomId,
+      data: {
+        videoId,
+        timestamp: Date.now(),
+      },
+    });
   };
 
+  // ⏸ PAUSE
+  const pause = () => socket.emit("pauseSong", roomId);
+
+  // ▶ RESUME
+  const resume = () => socket.emit("resumeSong", roomId);
+
   return (
-    <div
-      className="min-h-screen bg-cover bg-center"
-      style={{ backgroundImage: "url('/bg.jpeg')" }}
-    >
-      <div className="min-h-screen bg-black/60 p-4 text-white">
+    <div className="p-4 text-white bg-black min-h-screen">
 
-        {/* 💖 HEADER */}
-        <h1 className="text-3xl text-center font-bold mb-2">
-          Uthayaa ❤️ Anu
-        </h1>
-        <p className="text-center mb-6">
-          Our Private Music World 🎵
-        </p>
+      <h1 className="text-2xl text-center mb-4">
+        💖 Private Music Room
+      </h1>
 
-        {/* 🎵 SEARCH */}
-        <div className="flex justify-center mb-4">
-          <input
-            className="p-2 rounded-l text-black w-64"
-            placeholder="Search song..."
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button
-            onClick={search}
-            className="bg-pink-500 px-4 rounded-r"
-          >
-            Search
-          </button>
-        </div>
+      {/* SEARCH */}
+      <input
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search song"
+        className="text-black p-2"
+      />
+      <button onClick={search}>Search</button>
 
-        {/* 🎬 PLAYER */}
-        {current && (
-          <iframe
-            className="rounded-xl shadow-lg mb-4"
-            width="100%"
-            height="300"
-            src={`https://www.youtube.com/embed/${current}?autoplay=1`}
-            allowFullScreen
-          />
-        )}
+      {/* PLAYER */}
+      {current && isPlaying && (
+        <iframe
+          width="100%"
+          height="300"
+          src={`https://www.youtube.com/embed/${current.videoId}?autoplay=1&start=${Math.floor(
+            (Date.now() - current.timestamp) / 1000
+          )}`}
+        />
+      )}
 
-        {/* 🎵 RESULTS */}
-        <div className="grid grid-cols-2 gap-3">
-          {videos.map((v) => (
-            <div
-              key={v.id.videoId}
-              onClick={() => playSong(v.id.videoId)}
-              className="cursor-pointer bg-white/20 backdrop-blur-md p-2 rounded-lg hover:scale-105 transition"
-            >
-              <img
-                src={v.snippet.thumbnails.medium.url}
-                className="rounded"
-                alt="thumbnail"
-              />
-              <p className="text-sm mt-1">{v.snippet.title}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* 💬 CHAT */}
-        <div className="mt-6 bg-white/20 backdrop-blur-lg p-4 rounded-xl">
-          <div className="h-40 overflow-y-auto mb-2">
-            {chat.map((c, i) => (
-              <div
-                key={i}
-                className="bg-pink-500 text-white p-2 rounded mb-1"
-              >
-                {c}
-              </div>
-            ))}
-          </div>
-
-          <input
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            className="p-2 w-full text-black rounded"
-            placeholder="Type a message ❤️"
-          />
-
-          <button
-            onClick={sendMessage}
-            className="bg-pink-600 px-4 py-2 mt-2 rounded w-full"
-          >
-            Send ❤️
-          </button>
-        </div>
-
+      {/* CONTROLS */}
+      <div className="mt-2">
+        <button onClick={pause}>⏸ Pause</button>
+        <button onClick={resume}>▶ Resume</button>
       </div>
+
+      {/* RESULTS */}
+      {videos.map((v) => (
+        <div key={v.id.videoId} onClick={() => playSong(v.id.videoId)}>
+          <img src={v.snippet.thumbnails.medium.url} />
+          <p>{v.snippet.title}</p>
+        </div>
+      ))}
+
+      {/* CHAT */}
+      <div className="mt-4">
+        {chat.map((c, i) => <div key={i}>{c}</div>)}
+
+        <input
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          className="text-black"
+        />
+        <button onClick={sendMessage}>Send</button>
+      </div>
+
     </div>
   );
 }
