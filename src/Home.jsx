@@ -6,7 +6,7 @@ const API_URL = import.meta.env.VITE_API_URL;
 const socket = io(API_URL);
 
 export default function Home({ user }) {
-  const [roomId] = useState("uthayaa-anu"); // 💖 private room
+  const [roomId] = useState("uthayaa-anu");
   const [query, setQuery] = useState("");
   const [videos, setVideos] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -33,7 +33,7 @@ export default function Home({ user }) {
     setVideos(res.data.items);
   };
 
-  // 🏠 JOIN ROOM
+  // 🏠 JOIN ROOM + SOCKET EVENTS
   useEffect(() => {
     socket.emit("joinRoom", roomId);
 
@@ -51,24 +51,31 @@ export default function Home({ user }) {
       setIsPlaying(true);
     });
 
-    socket.on("pauseSong", () => setIsPlaying(false));
-    socket.on("resumeSong", () => setIsPlaying(true));
+    socket.on("pauseSong", () => {
+      setIsPlaying(false);
+    });
 
-    return () => {
-      socket.off();
-    };
+    socket.on("resumeSong", (data) => {
+      setCurrent(data);
+      setIsPlaying(true);
+    });
+
+    return () => socket.off();
   }, []);
 
-  // 💬 SEND
+  // 💬 SEND MESSAGE
   const sendMessage = () => {
+    if (!message.trim()) return;
+
     socket.emit("sendMessage", {
       roomId,
       msg: `${user}: ${message}`,
     });
+
     setMessage("");
   };
 
-  // 🎵 PLAY
+  // 🎵 PLAY SONG
   const playSong = (videoId) => {
     socket.emit("playSong", {
       roomId,
@@ -80,61 +87,92 @@ export default function Home({ user }) {
   };
 
   // ⏸ PAUSE
-  const pause = () => socket.emit("pauseSong", roomId);
+  const pause = () => {
+    socket.emit("pauseSong", roomId);
+  };
 
   // ▶ RESUME
-  const resume = () => socket.emit("resumeSong", roomId);
+  const resume = () => {
+    socket.emit("resumeSong", roomId);
+  };
 
   return (
-    <div className="p-4 text-white bg-black min-h-screen">
+    <div className="min-h-screen bg-black text-white p-4">
 
-      <h1 className="text-2xl text-center mb-4">
+      <h1 className="text-3xl text-center mb-4">
         💖 Private Music Room
       </h1>
 
       {/* SEARCH */}
-      <input
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search song"
-        className="text-black p-2"
-      />
-      <button onClick={search}>Search</button>
+      <div className="flex justify-center mb-4">
+        <input
+          className="p-2 text-black"
+          placeholder="Search song..."
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button onClick={search} className="bg-pink-500 px-4">
+          Search
+        </button>
+      </div>
 
-      {/* PLAYER */}
-      {current && isPlaying && (
+      {/* PLAYER (ALWAYS SHOW) */}
+      {current && (
         <iframe
           width="100%"
           height="300"
-          src={`https://www.youtube.com/embed/${current.videoId}?autoplay=1&start=${Math.floor(
+          src={`https://www.youtube.com/embed/${current.videoId}?autoplay=${
+            isPlaying ? 1 : 0
+          }&start=${Math.floor(
             (Date.now() - current.timestamp) / 1000
           )}`}
+          allow="autoplay"
+          allowFullScreen
         />
       )}
 
       {/* CONTROLS */}
-      <div className="mt-2">
-        <button onClick={pause}>⏸ Pause</button>
-        <button onClick={resume}>▶ Resume</button>
+      <div className="flex gap-2 mt-2">
+        <button onClick={pause} className="bg-red-500 px-3 py-1">
+          ⏸ Pause
+        </button>
+        <button onClick={resume} className="bg-green-500 px-3 py-1">
+          ▶ Resume
+        </button>
       </div>
 
       {/* RESULTS */}
-      {videos.map((v) => (
-        <div key={v.id.videoId} onClick={() => playSong(v.id.videoId)}>
-          <img src={v.snippet.thumbnails.medium.url} />
-          <p>{v.snippet.title}</p>
-        </div>
-      ))}
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        {videos.map((v) => (
+          <div
+            key={v.id.videoId}
+            onClick={() => playSong(v.id.videoId)}
+            className="cursor-pointer"
+          >
+            <img src={v.snippet.thumbnails.medium.url} />
+            <p className="text-sm">{v.snippet.title}</p>
+          </div>
+        ))}
+      </div>
 
       {/* CHAT */}
-      <div className="mt-4">
-        {chat.map((c, i) => <div key={i}>{c}</div>)}
+      <div className="mt-6">
+        <div className="h-40 overflow-y-auto mb-2">
+          {chat.map((c, i) => (
+            <div key={i} className="bg-pink-500 p-1 mb-1">
+              {c}
+            </div>
+          ))}
+        </div>
 
         <input
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          className="text-black"
+          className="text-black w-full p-2"
         />
-        <button onClick={sendMessage}>Send</button>
+
+        <button onClick={sendMessage} className="bg-pink-600 w-full mt-2">
+          Send ❤️
+        </button>
       </div>
 
     </div>
