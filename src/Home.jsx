@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 
-// 🔗 CHANGE THIS AFTER DEPLOY
-const socket = io("https://love-back-x3y9.onrender.com");
+// ✅ Backend URL from Render ENV
+const API_URL = import.meta.env.VITE_API_URL;
+
+// ✅ Socket connection
+const socket = io(API_URL);
 
 export default function Home({ user }) {
   const [query, setQuery] = useState("");
@@ -12,6 +15,7 @@ export default function Home({ user }) {
   const [message, setMessage] = useState("");
   const [chat, setChat] = useState([]);
 
+  // ✅ API KEY from ENV (SAFE)
   const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 
   // 🎵 SEARCH SONG
@@ -115,6 +119,7 @@ export default function Home({ user }) {
               <img
                 src={v.snippet.thumbnails.medium.url}
                 className="rounded"
+                alt="thumbnail"
               />
               <p className="text-sm mt-1">{v.snippet.title}</p>
             </div>
